@@ -65,28 +65,64 @@ install_nixos() {
         ok "Installed $dst"
     fi
 
-    # Step 2: check if configuration.nix already has extraLayouts.graphite
-    if [[ -f "$CONFIG_NIX" ]] && grep -qF "extraLayouts.graphite" "$CONFIG_NIX"; then
+    # Step 2: patch configuration.nix
+    if [[ ! -f "$CONFIG_NIX" ]]; then
+        die "$CONFIG_NIX not found"
+    fi
+
+    if grep -qF "extraLayouts.graphite" "$CONFIG_NIX"; then
         skip "configuration.nix already has extraLayouts.graphite"
         return
     fi
 
-    # Step 3: print the block — Nix files should not be patched with sed
-    log ""
-    log "Add this to your $CONFIG_NIX:"
-    log ""
-    cat <<BLOCK
-  services.xserver.xkb = {
-    layout = "$LAYOUT";
-    extraLayouts.$LAYOUT = {
-      description = "Graphite";
-      languages = [ "eng" ];
-      symbolsFile = ./$LAYOUT;
-    };
-  };
-BLOCK
-    log ""
-    log "Then run: sudo nixos-rebuild switch"
+    if [[ "$MODE" == "check" ]]; then
+        log "WOULD: patch $CONFIG_NIX"
+        return
+    fi
+
+    backup "$CONFIG_NIX"
+
+    # Check for old layout = "..." and offer to replace
+    local old_layout_line=""
+    old_layout_line=$(grep -n 'layout\s*=\s*"' "$CONFIG_NIX" | grep -v 'extraLayouts' | head -1 || true)
+
+    if [[ -n "$old_layout_line" ]]; then
+        local old_num old_val
+        old_num=$(echo "$old_layout_line" | cut -d: -f1)
+        old_val=$(echo "$old_layout_line" | sed 's/.*layout\s*=\s*"\([^"]*\)".*/\1/')
+        log "Found existing layout: $old_val (line $old_num)"
+        read -rp "Replace with $LAYOUT? [Y/n] " answer
+        answer="${answer:-Y}"
+        if [[ "$answer" =~ ^[Yy]$ ]]; then
+            sed -i "${old_num}s/layout\s*=\s*\"[^\"]*\"/layout = \"$LAYOUT\"/" "$CONFIG_NIX"
+            ok "Replaced layout with $LAYOUT"
+        else
+            log "Keeping existing layout"
+        fi
+    fi
+
+    # Insert the extraLayouts block before the last }
+    local block
+    block=$(printf '\n  services.xserver.xkb.extraLayouts.%s = {\n    description = "Graphite";\n    languages = [ "eng" ];\n    symbolsFile = ./%s;\n  };\n' "$LAYOUT" "$LAYOUT")
+
+    # Use a temp file for atomic write
+    local tmp
+    tmp=$(mktemp)
+    cp "$CONFIG_NIX" "$tmp"
+    # Insert before the last } in the file
+    local last_brace_line
+    last_brace_line=$(grep -n "^}" "$tmp" | tail -1 | cut -d: -f1)
+    if [[ -n "$last_brace_line" ]]; then
+        sed -i "${last_brace_line}i\\${block}" "$tmp"
+        cp "$tmp" "$CONFIG_NIX"
+        ok "Added extraLayouts.graphite to $CONFIG_NIX"
+    else
+        rm -f "$tmp"
+        die "Could not find closing } in $CONFIG_NIX — add the block manually"
+    fi
+    rm -f "$tmp"
+
+    log "Run: sudo nixos-rebuild switch"
 }
 
 # ======================
