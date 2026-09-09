@@ -111,15 +111,27 @@ install_kernel() {
                 log "WOULD: add keyd config to $CONFIG_NIX"
             else
                 backup "$CONFIG_NIX"
+                # Build the keyd block using NixOS module options
+                local keyd_block
+                keyd_block=$(cat <<KEYDBLK
+  services.keyd = {
+    enable = true;
+    keyboards.graphite = {
+      ids = [ "*" ];
+      extraConfig = ''
+$(sed '/^\[ids\]/d' "$src")
+      '';
+    };
+  };
+KEYDBLK
+)
                 local last_brace_line
                 last_brace_line=$(grep -n "^}" "$CONFIG_NIX" | tail -1 | cut -d: -f1)
                 if [[ -n "$last_brace_line" ]]; then
-                    local block
-                    block=$(printf '\n  services.keyd = {\n    enable = true;\n    keyboards.default.configFile = "%s";\n  };\n' "$KEYD_CONF")
                     local tmp
                     tmp=$(mktemp)
                     cp "$CONFIG_NIX" "$tmp"
-                    sed -i "${last_brace_line}i\\${block}" "$tmp"
+                    sed -i "${last_brace_line}i\\${keyd_block}" "$tmp"
                     cp "$tmp" "$CONFIG_NIX"
                     rm -f "$tmp"
                     ok "Added keyd config to $CONFIG_NIX"
