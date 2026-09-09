@@ -1,6 +1,6 @@
 # graphite-kp
 
-Custom XKB keyboard layout. A Colemak-DH variant optimized for my use.
+Custom XKB keyboard layout.
 
 ## Files
 
@@ -21,9 +21,3 @@ Preview without changes:
 ```bash
 ./install.sh --check
 ```
-
-Then activate:
-- **X11**: `setxkbmap graphite`
-- **Wayland/niri**: `layout "graphite"` in `input.keyboard.xkb`
-- **SDDM**: `XkbLayout=graphite` in `/etc/sddm.conf`
-- **console**: `XKBLAYOUT=graphite` in `/etc/vconsole.conf`
