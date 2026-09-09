@@ -27,9 +27,10 @@ backup() {
 
 usage() {
     cat <<EOF
-Usage: $0 [--kernel | --xkb | --check]
+Usage: $0 [--kernel | --xkb | --console | --check]
   --kernel  Install via keyd (kernel-level, works everywhere)
   --xkb     Install via XKB (X11/Wayland only)
+  --console Install NixOS console keymap (TTY only)
   --check   Dry-run, show what would happen
 EOF
     exit 1
@@ -39,9 +40,10 @@ MODE=""
 METHOD=""
 for arg in "$@"; do
     case "$arg" in
-        --kernel) METHOD="kernel" ;;
-        --xkb)    METHOD="xkb" ;;
-        --check)  MODE="check" ;;
+        --kernel)  METHOD="kernel" ;;
+        --xkb)     METHOD="xkb" ;;
+        --console) METHOD="console" ;;
+        --check)   MODE="check" ;;
         --help|-h) usage ;;
         *)  usage ;;
     esac
@@ -55,11 +57,13 @@ if [[ -z "$METHOD" ]]; then
     echo "Install method:"
     echo "  1) keyd (kernel-level) — works in TTY, X11, Wayland"
     echo "  2) XKB (X11/Wayland)   — only works in graphical sessions"
+    echo "  3) NixOS console        — TTY only, via console.keyMap"
     echo ""
-    read -rp "Choose [1/2]: " choice
+    read -rp "Choose [1/2/3]: " choice
     case "$choice" in
         1) METHOD="kernel" ;;
         2) METHOD="xkb" ;;
+        3) METHOD="console" ;;
         *) die "Invalid choice: $choice" ;;
     esac
 fi
@@ -80,7 +84,8 @@ install_kernel() {
         if is_nixos; then
             log "  Add to configuration.nix:"
             log "    services.keyd.enable = true;"
-            log "    services.keyd.keyboards.default.configFile = \"$KEYD_CONF\";"
+            log "    services.keyd.keyboards.graphite.ids = [ \"*\" ];"
+            log "    services.keyd.keyboards.graphite.extraConfig = ''...'';"
             log "  Then: sudo nixos-rebuild switch"
         else
             log "  https://github.com/rvaiya/keyd#installation"
@@ -225,6 +230,67 @@ install_nixos_xkb() {
 }
 
 # ======================
+# NixOS console keymap install
+# ======================
+install_console() {
+    local src="$SCRIPT_DIR/console/graphite.map"
+    [[ -f "$src" ]] || die "console/graphite.map not found in $SCRIPT_DIR"
+
+    if ! is_nixos; then
+        die "Console keymap method is NixOS only"
+    fi
+
+    log "NixOS console keymap install"
+
+    # Copy map file to /etc/nixos/
+    local dst="/etc/nixos/graphite.map"
+    if [[ -f "$dst" ]] && diff -q "$src" "$dst" >/dev/null 2>&1; then
+        skip "$dst up to date"
+    elif [[ "$MODE" == "check" ]]; then
+        log "WOULD: cp $src $dst"
+    else
+        cp "$src" "$dst"
+        ok "Installed $dst"
+    fi
+
+    # Patch configuration.nix
+    if [[ ! -f "$CONFIG_NIX" ]]; then
+        die "$CONFIG_NIX not found"
+    fi
+
+    if grep -qF "console.keyMap" "$CONFIG_NIX"; then
+        skip "configuration.nix already has console.keyMap"
+        return
+    fi
+
+    if [[ "$MODE" == "check" ]]; then
+        log "WOULD: add console.keyMap to $CONFIG_NIX"
+        return
+    fi
+
+    backup "$CONFIG_NIX"
+
+    local block
+    block=$(printf '\n  console.keyMap = ./%s;\n' "graphite.map")
+
+    local last_brace_line
+    last_brace_line=$(grep -n "^}" "$CONFIG_NIX" | tail -1 | cut -d: -f1)
+    if [[ -n "$last_brace_line" ]]; then
+        local tmp
+        tmp=$(mktemp)
+        cp "$CONFIG_NIX" "$tmp"
+        sed -i "${last_brace_line}i\\${block}" "$tmp"
+        cp "$tmp" "$CONFIG_NIX"
+        rm -f "$tmp"
+        ok "Added console.keyMap to $CONFIG_NIX"
+    else
+        die "Could not find closing } in $CONFIG_NIX — add the block manually"
+    fi
+
+    log "Run: sudo nixos-rebuild switch"
+}
+
+# ======================
 # Standard Linux XKB install
 # ======================
 install_standard_xkb() {
@@ -330,6 +396,9 @@ main() {
             else
                 install_standard_xkb
             fi
+            ;;
+        console)
+            install_console
             ;;
     esac
 }
