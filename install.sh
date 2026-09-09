@@ -52,6 +52,7 @@ install_symbols() {
         return
     fi
 
+    mkdir -p "$(dirname "$dst")"
     cp "$src" "$dst"
     ok "Installed $dst"
 }
