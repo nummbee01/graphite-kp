@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Auto-elevate: re-exec with sudo if not root
+if [[ $EUID -ne 0 ]]; then
+    echo "[graphite-kp] Root required. Asking for password..."
+    exec sudo "$0" "$@"
+fi
+
 XKB_SYMBOLS="/usr/share/X11/xkb/symbols"
 EDEV_XML="/usr/share/X11/xkb/rules/evdev.xml"
 EDEV_LST="/usr/share/X11/xkb/rules/evdev.lst"
@@ -27,10 +33,6 @@ log()  { echo "[graphite-kp] $*"; }
 ok()   { log "OK: $*"; }
 skip() { log "SKIP: $*"; }
 fail() { log "FAIL: $*"; exit 1; }
-
-must_root() {
-    [[ $EUID -eq 0 ]] || fail "Run as root (sudo ./install.sh)"
-}
 
 # --- symbols/graphite ---
 
@@ -124,7 +126,6 @@ install_evdev_lst() {
 # --- main ---
 
 main() {
-    must_root
     log "Mode: $MODE"
     install_symbols
     install_evdev_xml

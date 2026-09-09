@@ -12,14 +12,14 @@ Custom XKB keyboard layout. A Colemak-DH variant optimized for my use.
 ## Install
 
 ```bash
-sudo ./install.sh
+./install.sh
 ```
 
-Uses marker comments so it's idempotent — safe to run multiple times.
+Prompts for your password when needed. Idempotent — safe to run multiple times.
 
 Preview without changes:
 ```bash
-sudo ./install.sh --check
+./install.sh --check
 ```
 
 Then activate:
