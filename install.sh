@@ -7,10 +7,34 @@ if [[ $EUID -ne 0 ]]; then
     exec sudo "$0" "$@"
 fi
 
-XKB_SYMBOLS="/usr/share/X11/xkb/symbols"
-EDEV_XML="/usr/share/X11/xkb/rules/evdev.xml"
-EDEV_LST="/usr/share/X11/xkb/rules/evdev.lst"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LAYOUT_NAME="graphite"
+LAYOUT_MARKER="# graphite-kp-managed"
+
+# --- path detection ---
+
+find_file() {
+    # $1 = filename, $2+ = search dirs
+    for dir in "${@:2}"; do
+        [[ -f "$dir/$1" ]] && { echo "$dir/$1"; return 0; }
+    done
+    return 1
+}
+
+XKB_SYMBOLS_DIR=""
+for d in /usr/share/X11/xkb/symbols /usr/share/xkeyboard-config-2/symbols; do
+    [[ -d "$d" ]] && { XKB_SYMBOLS_DIR="$d"; break; }
+done
+[[ -n "$XKB_SYMBOLS_DIR" ]] || { echo "[graphite-kp] FAIL: no xkb symbols directory found"; exit 1; }
+
+EDEV_XML=""
+EDEV_LST=""
+for d in /usr/share/X11/xkb/rules /usr/share/xkeyboard-config-2/rules; do
+    [[ -z "$EDEV_XML" && -f "$d/evdev.xml" ]] && EDEV_XML="$d/evdev.xml"
+    [[ -z "$EDEV_LST" && -f "$d/evdev.lst" ]] && EDEV_LST="$d/evdev.lst"
+done
+
+# --- arg parsing ---
 
 usage() {
     echo "Usage: $0 [--apply | --check]"
@@ -24,23 +48,17 @@ MODE="apply"
 [[ "${1:-}" == "--apply" || $# -eq 0 ]] && MODE="apply"
 [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && usage
 
-LAYOUT_MARKER="# graphite-kp-managed"
-LAYOUT_NAME="graphite"
-LAYOUT_DESC="Graphite"
-LAYOUT_SHORT="graphite"
-
 log()  { echo "[graphite-kp] $*"; }
 ok()   { log "OK: $*"; }
 skip() { log "SKIP: $*"; }
-fail() { log "FAIL: $*"; exit 1; }
 
-# --- symbols/graphite ---
+# --- install symbols ---
 
 install_symbols() {
-    local src="$SCRIPT_DIR/symbols/graphite"
-    local dst="$XKB_SYMBOLS/$LAYOUT_NAME"
+    local src="$SCRIPT_DIR/symbols/$LAYOUT_NAME"
+    local dst="$XKB_SYMBOLS_DIR/$LAYOUT_NAME"
 
-    [[ -f "$src" ]] || fail "symbols/graphite not found in $SCRIPT_DIR"
+    [[ -f "$src" ]] || { log "FAIL: symbols/$LAYOUT_NAME not found in $SCRIPT_DIR"; exit 1; }
 
     if [[ -f "$dst" ]] && diff -q "$src" "$dst" >/dev/null 2>&1; then
         skip "$dst already up to date"
@@ -57,31 +75,34 @@ install_symbols() {
     ok "Installed $dst"
 }
 
-# --- evdev.xml ---
+# --- install evdev.xml ---
 
 install_evdev_xml() {
-    local marker_line="$LAYOUT_MARKER"
+    if [[ -z "$EDEV_XML" ]]; then
+        skip "evdev.xml not found, skipping XML registration"
+        return
+    fi
 
-    if grep -q "$marker_line" "$EDEV_XML" 2>/dev/null; then
+    if grep -q "$LAYOUT_MARKER" "$EDEV_XML" 2>/dev/null; then
         skip "evdev.xml already has graphite entry"
         return
     fi
 
     local block
     block=$(cat <<ENTRY
-    <!-- $marker_line start -->
+    <!-- $LAYOUT_MARKER start -->
     <layout>
       <configItem>
         <name>$LAYOUT_NAME</name>
-        <shortDescription>$LAYOUT_SHORT</shortDescription>
-        <description>$LAYOUT_DESC</description>
+        <shortDescription>$LAYOUT_NAME</shortDescription>
+        <description>Graphite</description>
         <languageList>
           <iso639Id>eng</iso639Id>
         </languageList>
       </configItem>
       <variantList/>
     </layout>
-    <!-- $marker_line end -->
+    <!-- $LAYOUT_MARKER end -->
 ENTRY
 )
 
@@ -90,21 +111,23 @@ ENTRY
         return
     fi
 
-    # Insert before </layoutList>
     if grep -q "</layoutList>" "$EDEV_XML"; then
         sed -i "/<\/layoutList>/i\\$block" "$EDEV_XML"
         ok "Added layout entry to $EDEV_XML"
     else
-        fail "$EDEV_XML missing </layoutList> tag"
+        log "WARN: $EDEV_XML missing </layoutList> tag, skipping"
     fi
 }
 
-# --- evdev.lst ---
+# --- install evdev.lst ---
 
 install_evdev_lst() {
-    local marker_line="$LAYOUT_MARKER"
+    if [[ -z "$EDEV_LST" ]]; then
+        skip "evdev.lst not found, skipping list registration"
+        return
+    fi
 
-    if grep -q "$marker_line" "$EDEV_LST" 2>/dev/null; then
+    if grep -q "$LAYOUT_MARKER" "$EDEV_LST" 2>/dev/null; then
         skip "evdev.lst already has graphite entry"
         return
     fi
@@ -114,13 +137,11 @@ install_evdev_lst() {
         return
     fi
 
-    # Find the ! layout section and insert alphabetically
     if grep -q "^! layout" "$EDEV_LST"; then
-        # Insert after the first "graphite" or alphabetically between entries
-        sed -i "/^! layout$/a\\  $LAYOUT_NAME        $LAYOUT_DESC  $marker_line" "$EDEV_LST"
+        sed -i "/^! layout$/a\\  $LAYOUT_NAME        Graphite  $LAYOUT_MARKER" "$EDEV_LST"
         ok "Added layout entry to $EDEV_LST"
     else
-        fail "$EDEV_LST missing ! layout section"
+        log "WARN: $EDEV_LST missing ! layout section, skipping"
     fi
 }
 
@@ -128,6 +149,9 @@ install_evdev_lst() {
 
 main() {
     log "Mode: $MODE"
+    log "Symbols dir: $XKB_SYMBOLS_DIR"
+    [[ -n "$EDEV_XML" ]] && log "evdev.xml: $EDEV_XML" || log "evdev.xml: not found"
+    [[ -n "$EDEV_LST" ]] && log "evdev.lst: $EDEV_LST" || log "evdev.lst: not found"
     install_symbols
     install_evdev_xml
     install_evdev_lst
