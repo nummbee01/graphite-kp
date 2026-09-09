@@ -22,14 +22,14 @@ find_file() {
 }
 
 XKB_SYMBOLS_DIR=""
-for d in /usr/share/X11/xkb/symbols /usr/share/xkeyboard-config-2/symbols; do
+for d in /usr/share/X11/xkb/symbols /usr/share/xkeyboard-config-2/symbols /run/current-system/sw/share/X11/xkb/symbols; do
     [[ -d "$d" ]] && { XKB_SYMBOLS_DIR="$d"; break; }
 done
 [[ -n "$XKB_SYMBOLS_DIR" ]] || { echo "[graphite-kp] FAIL: no xkb symbols directory found"; exit 1; }
 
 EDEV_XML=""
 EDEV_LST=""
-for d in /usr/share/X11/xkb/rules /usr/share/xkeyboard-config-2/rules; do
+for d in /usr/share/X11/xkb/rules /usr/share/xkeyboard-config-2/rules /run/current-system/sw/share/X11/xkb/rules; do
     [[ -z "$EDEV_XML" && -f "$d/evdev.xml" ]] && EDEV_XML="$d/evdev.xml"
     [[ -z "$EDEV_LST" && -f "$d/evdev.lst" ]] && EDEV_LST="$d/evdev.lst"
 done
