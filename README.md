@@ -21,3 +21,18 @@ Preview without changes:
 ```bash
 ./install.sh --check
 ```
+
+### NixOS
+
+Detected automatically. Installs symbols to `/etc/nixos/xkb/` and sets `xkbDir` in `configuration.nix`. Then:
+```bash
+sudo nixos-rebuild switch
+```
+
+### Other distros
+
+Activates with:
+- **X11**: `setxkbmap graphite`
+- **Wayland/niri**: `layout "graphite"` in `input.keyboard.xkb`
+- **SDDM**: `XkbLayout=graphite` in `/etc/sddm.conf`
+- **console**: `XKBLAYOUT=graphite` in `/etc/vconsole.conf`
