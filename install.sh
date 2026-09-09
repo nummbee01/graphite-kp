@@ -10,29 +10,13 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LAYOUT_NAME="graphite"
 LAYOUT_MARKER="# graphite-kp-managed"
+CONFIG_NIX="/etc/nixos/configuration.nix"
+NIXOS_XKB="/etc/nixos/xkb"
 
-# --- path detection ---
-
-find_file() {
-    # $1 = filename, $2+ = search dirs
-    for dir in "${@:2}"; do
-        [[ -f "$dir/$1" ]] && { echo "$dir/$1"; return 0; }
-    done
-    return 1
-}
-
-XKB_SYMBOLS_DIR=""
-for d in /usr/share/X11/xkb/symbols /usr/share/xkeyboard-config-2/symbols /run/current-system/sw/share/X11/xkb/symbols; do
-    [[ -d "$d" ]] && { XKB_SYMBOLS_DIR="$d"; break; }
-done
-[[ -n "$XKB_SYMBOLS_DIR" ]] || { echo "[graphite-kp] FAIL: no xkb symbols directory found"; exit 1; }
-
-EDEV_XML=""
-EDEV_LST=""
-for d in /usr/share/X11/xkb/rules /usr/share/xkeyboard-config-2/rules /run/current-system/sw/share/X11/xkb/rules; do
-    [[ -z "$EDEV_XML" && -f "$d/evdev.xml" ]] && EDEV_XML="$d/evdev.xml"
-    [[ -z "$EDEV_LST" && -f "$d/evdev.lst" ]] && EDEV_LST="$d/evdev.lst"
-done
+log()  { echo "[graphite-kp] $*"; }
+ok()   { log "OK: $*"; }
+skip() { log "SKIP: $*"; }
+fail() { log "FAIL: $*"; exit 1; }
 
 # --- arg parsing ---
 
@@ -48,48 +32,107 @@ MODE="apply"
 [[ "${1:-}" == "--apply" || $# -eq 0 ]] && MODE="apply"
 [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && usage
 
-log()  { echo "[graphite-kp] $*"; }
-ok()   { log "OK: $*"; }
-skip() { log "SKIP: $*"; }
+# --- detect NixOS ---
 
-# --- install symbols ---
+is_nixos() {
+    [[ -f /etc/NIXOS ]] || command -v nixos-rebuild &>/dev/null
+}
 
-install_symbols() {
+# --- NixOS install ---
+
+install_nixos() {
     local src="$SCRIPT_DIR/symbols/$LAYOUT_NAME"
-    local dst="$XKB_SYMBOLS_DIR/$LAYOUT_NAME"
+    [[ -f "$src" ]] || fail "symbols/$LAYOUT_NAME not found in $SCRIPT_DIR"
 
-    [[ -f "$src" ]] || { log "FAIL: symbols/$LAYOUT_NAME not found in $SCRIPT_DIR"; exit 1; }
+    log "Detected NixOS"
+
+    # 1. Copy symbols to /etc/nixos/xkb/symbols/
+    local dst="$NIXOS_XKB/symbols/$LAYOUT_NAME"
+    if [[ -f "$dst" ]] && diff -q "$src" "$dst" >/dev/null 2>&1; then
+        skip "$dst already up to date"
+    else
+        if [[ "$MODE" == "check" ]]; then
+            log "WOULD: cp $src $dst"
+        else
+            mkdir -p "$NIXOS_XKB/symbols"
+            cp "$src" "$dst"
+            ok "Installed $dst"
+        fi
+    fi
+
+    # 2. Ensure configuration.nix has xkbDir pointing to our custom dir
+    if [[ -f "$CONFIG_NIX" ]]; then
+        if grep -q "xkbDir" "$CONFIG_NIX" 2>/dev/null; then
+            skip "configuration.nix already has xkbDir setting"
+        else
+            if [[ "$MODE" == "check" ]]; then
+                log "WOULD: add xkbDir = \"$NIXOS_XKB\" to $CONFIG_NIX"
+            else
+                # Insert before the last } or after the xkb block
+                sed -i "/services\.xserver\.xkb/,/};/{
+                    /};/a\\
+    xkbDir = \"$NIXOS_XKB\";
+                }" "$CONFIG_NIX" 2>/dev/null || {
+                    # Fallback: append before final }
+                    sed -i '$ s/}/\n    services.xserver.xkbDir = "'"$NIXOS_XKB"'";\n}/' "$CONFIG_NIX"
+                }
+                ok "Added xkbDir to $CONFIG_NIX"
+            fi
+        fi
+    else
+        log "WARN: $CONFIG_NIX not found, skipping xkbDir config"
+        log "  Manually add: services.xserver.xkbDir = \"$NIXOS_XKB\";"
+    fi
+
+    log "Run: sudo nixos-rebuild switch"
+}
+
+# --- standard Linux install ---
+
+install_standard() {
+    local src="$SCRIPT_DIR/symbols/$LAYOUT_NAME"
+
+    # Find symbols dir
+    local symbols_dir=""
+    for d in /usr/share/X11/xkb/symbols /usr/share/xkeyboard-config-2/symbols; do
+        [[ -d "$d" ]] && { symbols_dir="$d"; break; }
+    done
+    [[ -n "$symbols_dir" ]] || fail "No xkb symbols directory found"
+
+    # Find evdev files
+    local evdev_xml="" evdev_lst=""
+    for d in /usr/share/X11/xkb/rules /usr/share/xkeyboard-config-2/rules; do
+        [[ -z "$evdev_xml" && -f "$d/evdev.xml" ]] && evdev_xml="$d/evdev.xml"
+        [[ -z "$evdev_lst" && -f "$d/evdev.lst" ]] && evdev_lst="$d/evdev.lst"
+    done
+
+    log "Symbols dir: $symbols_dir"
+    [[ -n "$evdev_xml" ]] && log "evdev.xml: $evdev_xml" || log "evdev.xml: not found"
+    [[ -n "$evdev_lst" ]] && log "evdev.lst: $evdev_lst" || log "evdev.lst: not found"
+
+    # Install symbols file
+    [[ -f "$src" ]] || fail "symbols/$LAYOUT_NAME not found in $SCRIPT_DIR"
+    local dst="$symbols_dir/$LAYOUT_NAME"
 
     if [[ -f "$dst" ]] && diff -q "$src" "$dst" >/dev/null 2>&1; then
         skip "$dst already up to date"
-        return
+    else
+        if [[ "$MODE" == "check" ]]; then
+            log "WOULD: cp $src $dst"
+        else
+            mkdir -p "$(dirname "$dst")"
+            cp "$src" "$dst"
+            ok "Installed $dst"
+        fi
     fi
 
-    if [[ "$MODE" == "check" ]]; then
-        log "WOULD: cp $src $dst"
-        return
-    fi
-
-    mkdir -p "$(dirname "$dst")"
-    cp "$src" "$dst"
-    ok "Installed $dst"
-}
-
-# --- install evdev.xml ---
-
-install_evdev_xml() {
-    if [[ -z "$EDEV_XML" ]]; then
-        skip "evdev.xml not found, skipping XML registration"
-        return
-    fi
-
-    if grep -q "$LAYOUT_MARKER" "$EDEV_XML" 2>/dev/null; then
-        skip "evdev.xml already has graphite entry"
-        return
-    fi
-
-    local block
-    block=$(cat <<ENTRY
+    # Install evdev.xml entry
+    if [[ -n "$evdev_xml" ]]; then
+        if grep -q "$LAYOUT_MARKER" "$evdev_xml" 2>/dev/null; then
+            skip "evdev.xml already has graphite entry"
+        else
+            local block
+            block=$(cat <<ENTRY
     <!-- $LAYOUT_MARKER start -->
     <layout>
       <configItem>
@@ -105,57 +148,45 @@ install_evdev_xml() {
     <!-- $LAYOUT_MARKER end -->
 ENTRY
 )
-
-    if [[ "$MODE" == "check" ]]; then
-        log "WOULD: insert layout block into $EDEV_XML"
-        return
+            if [[ "$MODE" == "check" ]]; then
+                log "WOULD: insert layout block into $evdev_xml"
+            elif grep -q "</layoutList>" "$evdev_xml"; then
+                sed -i "/<\/layoutList>/i\\$block" "$evdev_xml"
+                ok "Added layout entry to $evdev_xml"
+            else
+                log "WARN: $evdev_xml missing </layoutList> tag, skipping"
+            fi
+        fi
     fi
 
-    if grep -q "</layoutList>" "$EDEV_XML"; then
-        sed -i "/<\/layoutList>/i\\$block" "$EDEV_XML"
-        ok "Added layout entry to $EDEV_XML"
-    else
-        log "WARN: $EDEV_XML missing </layoutList> tag, skipping"
-    fi
-}
-
-# --- install evdev.lst ---
-
-install_evdev_lst() {
-    if [[ -z "$EDEV_LST" ]]; then
-        skip "evdev.lst not found, skipping list registration"
-        return
-    fi
-
-    if grep -q "$LAYOUT_MARKER" "$EDEV_LST" 2>/dev/null; then
-        skip "evdev.lst already has graphite entry"
-        return
+    # Install evdev.lst entry
+    if [[ -n "$evdev_lst" ]]; then
+        if grep -q "$LAYOUT_MARKER" "$evdev_lst" 2>/dev/null; then
+            skip "evdev.lst already has graphite entry"
+        else
+            if [[ "$MODE" == "check" ]]; then
+                log "WOULD: insert layout line into $evdev_lst"
+            elif grep -q "^! layout" "$evdev_lst"; then
+                sed -i "/^! layout$/a\\  $LAYOUT_NAME        Graphite  $LAYOUT_MARKER" "$evdev_lst"
+                ok "Added layout entry to $evdev_lst"
+            else
+                log "WARN: $evdev_lst missing ! layout section, skipping"
+            fi
+        fi
     fi
 
-    if [[ "$MODE" == "check" ]]; then
-        log "WOULD: insert layout line into $EDEV_LST"
-        return
-    fi
-
-    if grep -q "^! layout" "$EDEV_LST"; then
-        sed -i "/^! layout$/a\\  $LAYOUT_NAME        Graphite  $LAYOUT_MARKER" "$EDEV_LST"
-        ok "Added layout entry to $EDEV_LST"
-    else
-        log "WARN: $EDEV_LST missing ! layout section, skipping"
-    fi
+    log "Done. Set layout with: setxkbmap $LAYOUT_NAME"
 }
 
 # --- main ---
 
 main() {
     log "Mode: $MODE"
-    log "Symbols dir: $XKB_SYMBOLS_DIR"
-    [[ -n "$EDEV_XML" ]] && log "evdev.xml: $EDEV_XML" || log "evdev.xml: not found"
-    [[ -n "$EDEV_LST" ]] && log "evdev.lst: $EDEV_LST" || log "evdev.lst: not found"
-    install_symbols
-    install_evdev_xml
-    install_evdev_lst
-    log "Done. Set layout with: setxkbmap $LAYOUT_NAME"
+    if is_nixos; then
+        install_nixos
+    else
+        install_standard
+    fi
 }
 
 main
