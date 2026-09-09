@@ -12,6 +12,7 @@ LAYOUT_NAME="graphite"
 LAYOUT_MARKER="# graphite-kp-managed"
 CONFIG_NIX="/etc/nixos/configuration.nix"
 NIXOS_XKB="/etc/nixos/xkb"
+SYMBOLS_CPIO="$SCRIPT_DIR/symbols/graphite"
 
 log()  { echo "[graphite-kp] $*"; }
 ok()   { log "OK: $*"; }
@@ -46,42 +47,58 @@ install_nixos() {
 
     log "Detected NixOS"
 
-    # 1. Copy symbols to /etc/nixos/xkb/symbols/
-    local dst="$NIXOS_XKB/symbols/$LAYOUT_NAME"
-    if [[ -f "$dst" ]] && diff -q "$src" "$dst" >/dev/null 2>&1; then
-        skip "$dst already up to date"
+    # 1. Copy symbols to /etc/nixos/graphite (next to configuration.nix)
+    local symbols_dst="/etc/nixos/graphite"
+    if [[ -f "$symbols_dst" ]] && diff -q "$src" "$symbols_dst" >/dev/null 2>&1; then
+        skip "$symbols_dst already up to date"
     else
         if [[ "$MODE" == "check" ]]; then
-            log "WOULD: cp $src $dst"
+            log "WOULD: cp $src $symbols_dst"
         else
-            mkdir -p "$NIXOS_XKB/symbols"
-            cp "$src" "$dst"
-            ok "Installed $dst"
+            cp "$src" "$symbols_dst"
+            ok "Installed $symbols_dst"
         fi
     fi
 
-    # 2. Ensure configuration.nix has xkbDir pointing to our custom dir
+    # 2. Patch configuration.nix with extraLayouts
     if [[ -f "$CONFIG_NIX" ]]; then
-        if grep -q "xkbDir" "$CONFIG_NIX" 2>/dev/null; then
-            skip "configuration.nix already has xkbDir setting"
+        if grep -q "extraLayouts" "$CONFIG_NIX" 2>/dev/null; then
+            skip "configuration.nix already has extraLayouts"
         else
             if [[ "$MODE" == "check" ]]; then
-                log "WOULD: add xkbDir = \"$NIXOS_XKB\" to $CONFIG_NIX"
+                log "WOULD: add extraLayouts block to $CONFIG_NIX"
             else
-                # Insert before the last } or after the xkb block
-                sed -i "/services\.xserver\.xkb/,/};/{
-                    /};/a\\
-    xkbDir = \"$NIXOS_XKB\";
-                }" "$CONFIG_NIX" 2>/dev/null || {
-                    # Fallback: append before final }
-                    sed -i '$ s/}/\n    services.xserver.xkbDir = "'"$NIXOS_XKB"'";\n}/' "$CONFIG_NIX"
-                }
-                ok "Added xkbDir to $CONFIG_NIX"
+                local block
+                block=$(cat <<'NBLOCK'
+    services.xserver.xkb.extraLayouts.graphite = {
+      description = "Graphite";
+      languages = [ "eng" ];
+      symbolsFile = ./graphite;
+    };
+NBLOCK
+)
+                # Insert before the last }
+                local last_brace=$(grep -n "^}" "$CONFIG_NIX" | tail -1 | cut -d: -f1)
+                if [[ -n "$last_brace" ]]; then
+                    sed -i "${last_brace}i\\
+${block}" "$CONFIG_NIX"
+                    ok "Added extraLayouts to $CONFIG_NIX"
+                else
+                    log "WARN: Could not find closing } in $CONFIG_NIX, appending"
+                    echo "" >> "$CONFIG_NIX"
+                    echo "$block" >> "$CONFIG_NIX"
+                    ok "Appended extraLayouts to $CONFIG_NIX"
+                fi
             fi
         fi
     else
-        log "WARN: $CONFIG_NIX not found, skipping xkbDir config"
-        log "  Manually add: services.xserver.xkbDir = \"$NIXOS_XKB\";"
+        log "WARN: $CONFIG_NIX not found"
+        log "  Manually add to configuration.nix:"
+        log "    services.xserver.xkb.extraLayouts.graphite = {"
+        log "      description = \"Graphite\";"
+        log "      languages = [ \"eng\" ];"
+        log "      symbolsFile = ./graphite;"
+        log "    };"
     fi
 
     log "Run: sudo nixos-rebuild switch"

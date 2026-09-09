@@ -24,7 +24,7 @@ Preview without changes:
 
 ### NixOS
 
-Detected automatically. Installs symbols to `/etc/nixos/xkb/` and sets `xkbDir` in `configuration.nix`. Then:
+Detected automatically. Copies symbols to `/etc/nixos/graphite` and adds `extraLayouts` to `configuration.nix`. Then:
 ```bash
 sudo nixos-rebuild switch
 ```
