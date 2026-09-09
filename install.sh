@@ -103,7 +103,7 @@ install_nixos() {
 
     # Insert the extraLayouts block before the last }
     local block
-    block=$(printf '\n  services.xserver.xkb.extraLayouts.%s = {\n    description = "Graphite";\n    languages = [ "eng" ];\n    symbolsFile = ./%s;\n  };\n' "$LAYOUT" "$LAYOUT")
+    block=$(printf '\n  services.xserver.xkb.extraLayouts.%s = {\n    description = "Graphite";\n    languages = [ "eng" ];\n    symbolsFile = ./%s;\n  };\n  console.useXkbConfig = true;\n' "$LAYOUT" "$LAYOUT")
 
     # Use a temp file for atomic write
     local tmp
