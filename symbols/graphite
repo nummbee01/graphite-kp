@@ -1,5 +1,5 @@
 default partial alphanumeric_keys modifier_keys
-xkb_symbols "graphite" {
+xkb_symbols "basic" {
 
    name[Group1]= "graphite";
 

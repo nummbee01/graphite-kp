@@ -1,5 +1,0 @@
-!
-! Add this line inside the ! layout section of:
-! /usr/share/X11/xkb/rules/evdev.lst
-!
-  graphite        Graphite
