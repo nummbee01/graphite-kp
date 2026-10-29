@@ -15,15 +15,14 @@
   declared inside the .klc file.
 
 .PARAMETER Klc
-  Path to the .klc source. Defaults to graphite-kp.klc next to this script.
+  Path to the .klc source. Defaults to ..\source\graphite-kp.klc.
 
 .PARAMETER OutDir
-  Directory to write build\amd64 and build\wow64 into. Defaults to build\ next
-  to this script.
+  Directory to write amd64\ and wow64\ into. Defaults to ..\build.
 
 .EXAMPLE
   .\build.ps1
-  .\build.ps1 -Klc .\graphite-kp-qwerty-shortcuts.klc
+  .\build.ps1 -Klc ..\source\graphite-kp-qwerty-shortcuts.klc
 #>
 [CmdletBinding()]
 param(
@@ -35,8 +34,9 @@ $ErrorActionPreference = 'Stop'
 
 # $PSScriptRoot is not populated yet inside a param() default, so resolve here.
 if (-not $PSScriptRoot) { throw 'Run this from a file: powershell -File build.ps1' }
-if (-not $Klc)    { $Klc    = Join-Path $PSScriptRoot 'graphite-kp.klc' }
-if (-not $OutDir) { $OutDir = Join-Path $PSScriptRoot 'build' }
+$windowsRoot = Split-Path $PSScriptRoot -Parent
+if (-not $Klc)    { $Klc    = Join-Path $windowsRoot 'source\graphite-kp.klc' }
+if (-not $OutDir) { $OutDir = Join-Path $windowsRoot 'build' }
 
 # --- locate kbdutool (ships with MSKLC 1.4) -------------------------------
 $candidates = @(

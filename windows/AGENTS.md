@@ -11,4 +11,8 @@
   QWERTY key. `Install.cmd` builds the former.
 - `kbdutool` reads only UTF-16LE and crashes (`0xC0000409`) on UTF-8, so
   `build.ps1` re-encodes the UTF-8 `.klc` into a temp copy before building.
-- Verify: `Get-WinUserLanguageList` lists `0409:a0020409`.
+- The registration needs a `Layout Id` value. Without it Windows loads the
+  layout through the substitute path as HKL `0xFFFE....`, never adopts it as an
+  input method, and every app falls back to the language default.
+- Verify: `Get-WinUserLanguageList` lists `0409:a0020409`, and the loaded HKL is
+  `0xF0C00409`, not `0xFFFE0409`.

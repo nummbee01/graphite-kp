@@ -6,11 +6,13 @@
   1. Copies graphkp.dll into System32 (64-bit) and SysWOW64 (32-bit).
      If a copy is locked because the DLL is already loaded, the file is
      renamed aside (or the replacement is scheduled) and completed on reboot.
-  2. Registers the layout under HKLM\...\Control\Keyboard Layouts.
+  2. Registers the layout under HKLM\...\Control\Keyboard Layouts, including a
+     "Layout Id", which Windows requires before it will treat the layout as a
+     real input method.
   3. Adds it to the current user's input list so it appears in Win+Space.
 
 .PARAMETER BuildDir
-  Where build.ps1 wrote amd64\ and wow64\. Defaults to build\ next to this script.
+  Where build.ps1 wrote amd64\ and wow64\. Defaults to ..\build.
 
 .PARAMETER SetDefault
   Make Graphite KP the default input method for the current user.
@@ -21,9 +23,10 @@
 [CmdletBinding()]
 param(
     [string]$BuildDir,
-    [string]$LayoutId   = 'a0020409',
-    [string]$LayoutName = 'Graphite KP',
-    [string]$DllName    = 'graphkp.dll',
+    [string]$LayoutId    = 'a0020409',
+    [string]$LayoutName  = 'Graphite KP',
+    [string]$DllName     = 'graphkp.dll',
+    [string]$ComponentId = '{9761D3FD-CAC2-4640-B217-A52C870CC6CB}',
     [switch]$SetDefault
 )
 
@@ -31,7 +34,7 @@ $ErrorActionPreference = 'Stop'
 
 # $PSScriptRoot is not populated yet inside a param() default, so resolve here.
 if (-not $PSScriptRoot) { throw 'Run this from a file: powershell -File install.ps1' }
-if (-not $BuildDir) { $BuildDir = Join-Path $PSScriptRoot 'build' }
+if (-not $BuildDir) { $BuildDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'build' }
 
 # --- must be elevated ------------------------------------------------------
 $isAdmin = ([Security.Principal.WindowsPrincipal] `
@@ -82,27 +85,55 @@ Install-Dll (Join-Path $BuildDir "amd64\$DllName") (Join-Path $env:SystemRoot "S
 Install-Dll (Join-Path $BuildDir "wow64\$DllName") (Join-Path $env:SystemRoot "SysWOW64\$DllName")
 
 # --- register the layout ---------------------------------------------------
+# "Layout Id" is what Windows uses to give the layout a real device id and a
+# proper HKL (0xF0xx....). Without it the layout can only load through the
+# substitute path, gets HKL 0xFFFE...., and is never adopted as an input
+# method: every app silently falls back to the language default. MSKLC starts
+# assigning at 00c0, so do the same and skip anything already taken.
+function Get-FreeLayoutId {
+    $used = @{}
+    Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Control\Keyboard Layouts' | ForEach-Object {
+        $id = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).'Layout Id'
+        if ($id) { $used[$id.ToLower()] = $true }
+    }
+    foreach ($i in 0x00c0..0x0fff) {
+        $hex = '{0:x4}' -f $i
+        if (-not $used.ContainsKey($hex)) { return $hex }
+    }
+    throw 'No free Layout Id available.'
+}
+
 $key = "HKLM:\SYSTEM\CurrentControlSet\Control\Keyboard Layouts\$LayoutId"
 New-Item -Path $key -Force | Out-Null
 New-ItemProperty -Path $key -Name 'Layout Text'         -Value $LayoutName -PropertyType String -Force | Out-Null
 New-ItemProperty -Path $key -Name 'Layout File'         -Value $DllName    -PropertyType String -Force | Out-Null
 New-ItemProperty -Path $key -Name 'Layout Display Name' -Value "@%SystemRoot%\system32\$DllName,-1000" -PropertyType String -Force | Out-Null
-Write-Host "OK  registered $LayoutId  ($LayoutName)"
+
+$layoutIdValue = (Get-ItemProperty $key).'Layout Id'
+if (-not $layoutIdValue) { $layoutIdValue = Get-FreeLayoutId }
+New-ItemProperty -Path $key -Name 'Layout Id'           -Value $layoutIdValue -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $key -Name 'Layout Component ID' -Value $ComponentId    -PropertyType String -Force | Out-Null
+Write-Host "OK  registered $LayoutId  ($LayoutName, Layout Id $layoutIdValue)"
 
 # --- add to this user's input list ----------------------------------------
 $tip  = "0409:$LayoutId"
 $list = Get-WinUserLanguageList
-if ($list[0].InputMethodTips -contains $tip) {
-    Write-Host "OK  $tip already in the input list"
-} else {
+if ($list[0].InputMethodTips -notcontains $tip) {
     $list[0].InputMethodTips.Add($tip)
-    Set-WinUserLanguageList -LanguageList $list -Force
     Write-Host "OK  added $tip to the input list"
+} else {
+    Write-Host "OK  $tip already in the input list"
 }
+# Always re-apply: this is also what makes Windows rebuild the Preload and
+# Substitutes entries, which it must do after a Layout Id is registered.
+Set-WinUserLanguageList -LanguageList $list -Force
 
 if ($SetDefault) {
+    # InputMethodTips is read only, so reorder by clearing and re-adding.
     $list = Get-WinUserLanguageList
-    $list[0].InputMethodTips = @($tip) + ($list[0].InputMethodTips | Where-Object { $_ -ne $tip })
+    $tips = @($tip) + @($list[0].InputMethodTips | Where-Object { $_ -ne $tip })
+    $list[0].InputMethodTips.Clear()
+    foreach ($t in $tips) { $list[0].InputMethodTips.Add($t) }
     Set-WinUserLanguageList -LanguageList $list -Force
     Write-Host "OK  set $tip as the default input method"
 }
